@@ -23,6 +23,7 @@ type Config struct {
 	ModSecurityUrl   string `json:"modSecurityUrl,omitempty"`
 	MaxBodySize      int64  `json:"maxBodySize"`
 	InterruptOnError bool   `json:"InterruptOnError"`
+	Ignore500Error   bool   `json:"Ignore500Error"`
 }
 
 // CreateConfig creates the default plugin configuration.
@@ -33,6 +34,7 @@ func CreateConfig() *Config {
 		// the user will configure this parameter during the installation.
 		MaxBodySize:      10 * 1024 * 1024,
 		InterruptOnError: true,
+		Ignore500Error:   false,
 	}
 }
 
@@ -42,6 +44,7 @@ type Modsecurity struct {
 	modSecurityUrl   string
 	maxBodySize      int64
 	interruptOnError bool
+	ignore500Error bool
 	name             string
 	logger           *log.Logger
 }
@@ -56,6 +59,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		modSecurityUrl:   config.ModSecurityUrl,
 		maxBodySize:      config.MaxBodySize,
 		interruptOnError: config.InterruptOnError,
+		ignore500Error: config.Ignore500Error,
 		next:             next,
 		name:             name,
 		logger:           log.New(os.Stdout, "", log.LstdFlags),
@@ -130,7 +134,7 @@ func (a *Modsecurity) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode >= 400 && (!a.ignore500Error || resp.StatusCode < 500) {
 		forwardResponse(resp, rw)
 		return
 	}
