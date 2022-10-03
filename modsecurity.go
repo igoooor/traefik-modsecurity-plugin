@@ -70,15 +70,7 @@ func (a *Modsecurity) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			if a.interruptOnError {
-				a.logger.Printf("Non-Recovered Panic. Error: %s", r)
-				a.logger.Print("Non-Recovered Panic. Request: ", req)
-				http.Error(rw, "", http.StatusBadGateway)
-			} else {
-				a.logger.Printf("Recovered Panic. Error: %s", r)
-				a.logger.Print("Recovered Panic. Request: ", req)
-				a.next.ServeHTTP(rw, req)
-			}
+			a.handleError(rw, req, fmt.Sprintf("Panic. Error: %s", r), http.StatusBadGateway)
 			return
 		}
 	}()
@@ -94,11 +86,9 @@ func (a *Modsecurity) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	body, err := ioutil.ReadAll(http.MaxBytesReader(rw, req.Body, a.maxBodySize))
 	if err != nil {
 		if err.Error() == "http: request body too large" {
-			a.logger.Printf("body max limit reached: %s", err.Error())
-			http.Error(rw, "", http.StatusRequestEntityTooLarge)
+			a.handleError(rw, req, fmt.Sprintf("body max limit reached: %s", err.Error()), http.StatusRequestEntityTooLarge)
 		} else {
-			a.logger.Printf("fail to read incoming request: %s", err.Error())
-			http.Error(rw, "", http.StatusBadGateway)
+			a.handleError(rw, req, fmt.Sprintf("fail to read incoming request: %s", err.Error()), http.StatusBadGateway)
 		}
 		return
 	}
@@ -112,8 +102,7 @@ func (a *Modsecurity) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	proxyReq, err := http.NewRequest(req.Method, url, bytes.NewReader(body))
 
 	if err != nil {
-		a.logger.Printf("fail to prepare forwarded request: %s", err.Error())
-		http.Error(rw, "", http.StatusBadGateway)
+		a.handleError(rw, req, fmt.Sprintf("fail to prepare forwarded request: %s", err.Error()), http.StatusBadGateway)
 		return
 	}
 
@@ -126,12 +115,7 @@ func (a *Modsecurity) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	resp, err := httpClient.Do(proxyReq)
 	if err != nil {
-		a.logger.Printf("fail to send HTTP request to modsec: %s", err.Error())
-		if a.interruptOnError {
-			http.Error(rw, "", http.StatusBadGateway)
-		} else {
-			a.next.ServeHTTP(rw, req)
-		}
+		a.handleError(rw, req, fmt.Sprintf("fail to send HTTP request to modsec: %s", err.Error()), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
@@ -170,4 +154,16 @@ func forwardResponse(resp *http.Response, rw http.ResponseWriter) {
 	rw.WriteHeader(resp.StatusCode)
 	// copy body
 	io.Copy(rw, resp.Body)
+}
+
+func (a *Modsecurity) handleError(rw http.ResponseWriter, req *http.Request, errorMessage string, code int) {
+	a.logger.Printf(errorMessage)
+	a.logger.Print("ModSecurity::handleError Request: ", req)
+	if a.interruptOnError {
+		a.logger.Print("ModSecurity::handleError [Interrupt]")
+		http.Error(rw, "", code)
+	} else {
+		a.logger.Print("ModSecurity::handleError [Continue]")
+		a.next.ServeHTTP(rw, req)
+	}
 }
