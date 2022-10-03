@@ -136,9 +136,15 @@ func (a *Modsecurity) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 && (!a.ignore500Error || resp.StatusCode < 500) {
-		forwardResponse(resp, rw)
-		return
+	if resp.StatusCode >= 400 {
+		if resp.StatusCode >= 500 {
+			a.logger.Print("OWASP 500 error. Request ", req)
+			a.logger.Print("OWASP 500 error. Response ", resp)
+		}
+		if resp.StatusCode < 500 || !a.ignore500Error {
+			forwardResponse(resp, rw)
+			return
+		}
 	}
 
 	a.next.ServeHTTP(rw, req)
