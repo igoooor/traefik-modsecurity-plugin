@@ -44,7 +44,7 @@ type Modsecurity struct {
 	modSecurityUrl   string
 	maxBodySize      int64
 	interruptOnError bool
-	ignore500Error bool
+	ignore500Error   bool
 	name             string
 	logger           *log.Logger
 }
@@ -59,7 +59,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		modSecurityUrl:   config.ModSecurityUrl,
 		maxBodySize:      config.MaxBodySize,
 		interruptOnError: config.InterruptOnError,
-		ignore500Error: config.Ignore500Error,
+		ignore500Error:   config.Ignore500Error,
 		next:             next,
 		name:             name,
 		logger:           log.New(os.Stdout, "", log.LstdFlags),
@@ -72,9 +72,11 @@ func (a *Modsecurity) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		if r := recover(); r != nil {
 			if a.interruptOnError {
 				a.logger.Printf("Non-Recovered Panic. Error: %s", r)
+				a.logger.Print("Non-Recovered Panic. Request: ", req)
 				http.Error(rw, "", http.StatusBadGateway)
 			} else {
 				a.logger.Printf("Recovered Panic. Error: %s", r)
+				a.logger.Print("Recovered Panic. Request: ", req)
 				a.next.ServeHTTP(rw, req)
 			}
 			return
