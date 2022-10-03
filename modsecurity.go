@@ -20,8 +20,9 @@ var httpClient = &http.Client{
 
 // Config the plugin configuration.
 type Config struct {
-	ModSecurityUrl string `json:"modSecurityUrl,omitempty"`
-	MaxBodySize    int64  `json:"maxBodySize"`
+	ModSecurityUrl   string `json:"modSecurityUrl,omitempty"`
+	MaxBodySize      int64  `json:"maxBodySize"`
+	InterruptOnError bool   `json:"InterruptOnError"`
 }
 
 // CreateConfig creates the default plugin configuration.
@@ -30,17 +31,19 @@ func CreateConfig() *Config {
 		// Safe default: if the max body size was not specified, use 10MB
 		// Note that this will break any file upload with files > 10MB. Hopefully
 		// the user will configure this parameter during the installation.
-		MaxBodySize: 10 * 1024 * 1024,
+		MaxBodySize:      10 * 1024 * 1024,
+		InterruptOnError: true,
 	}
 }
 
 // Modsecurity a Modsecurity plugin.
 type Modsecurity struct {
-	next           http.Handler
-	modSecurityUrl string
-	maxBodySize    int64
-	name           string
-	logger         *log.Logger
+	next             http.Handler
+	modSecurityUrl   string
+	maxBodySize      int64
+	interruptOnError bool
+	name             string
+	logger           *log.Logger
 }
 
 // New created a new Modsecurity plugin.
@@ -50,15 +53,29 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	}
 
 	return &Modsecurity{
-		modSecurityUrl: config.ModSecurityUrl,
-		maxBodySize:    config.MaxBodySize,
-		next:           next,
-		name:           name,
-		logger:         log.New(os.Stdout, "", log.LstdFlags),
+		modSecurityUrl:   config.ModSecurityUrl,
+		maxBodySize:      config.MaxBodySize,
+		interruptOnError: config.InterruptOnError,
+		next:             next,
+		name:             name,
+		logger:           log.New(os.Stdout, "", log.LstdFlags),
 	}, nil
 }
 
 func (a *Modsecurity) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+
+	defer func() {
+		if r := recover(); r != nil {
+			if a.interruptOnError {
+				a.logger.Printf("Non-Recovered Panic. Error: %s", r)
+				http.Error(rw, "", http.StatusBadGateway)
+			} else {
+				a.logger.Printf("Recovered Panic. Error: %s", r)
+				a.next.ServeHTTP(rw, req)
+			}
+			return
+		}
+	}()
 
 	// Websocket not supported
 	if isWebsocket(req) {
@@ -104,7 +121,11 @@ func (a *Modsecurity) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	resp, err := httpClient.Do(proxyReq)
 	if err != nil {
 		a.logger.Printf("fail to send HTTP request to modsec: %s", err.Error())
-		http.Error(rw, "", http.StatusBadGateway)
+		if a.interruptOnError {
+			http.Error(rw, "", http.StatusBadGateway)
+		} else {
+			a.next.ServeHTTP(rw, req)
+		}
 		return
 	}
 	defer resp.Body.Close()
